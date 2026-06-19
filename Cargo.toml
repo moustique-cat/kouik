@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+winit = { version = "0.30"}
+wgpu = { version = "24", features = ["wgsl"] }
+pollster = { version = "0.4"}
