@@ -1,0 +1,1 @@
+note app obsessed with latency
