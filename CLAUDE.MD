@@ -21,6 +21,7 @@ I am here to learn. Do NOT write the code for me. Act as a coach:
 - Minimal work per keystroke: input → buffer → draw → present
 - Measure before optimizing; record numbers in docs/devlog.md
 - Prefer understanding over speed of delivery
+- Explain your choices, especially around the render loop
 
 ## Stack
 - Rust, winit (windowing), wgpu (GPU drawing)
@@ -28,5 +29,12 @@ I am here to learn. Do NOT write the code for me. Act as a coach:
 
 ## Status
 - [x] Cargo scaffold + README, pushed to GitHub
+- [x] Documentation scaffolding (ARCHITECTURE.md, docs/concepts/)
 - [ ] Open a window, clear it to a color
 - [ ] Render text
+
+## Docs
+- `ARCHITECTURE.md` — how kouik works right now; rewrite as the design changes
+- `docs/concepts/rendering.md` — swapchain, vsync, present modes
+- `docs/concepts/text.md` — glyph rasterization, atlases, shaping
+- `docs/concepts/latency.md` — input-to-glass path, where ms hide, how to measure
