@@ -1,7 +1,5 @@
 # Latency concepts
 
-_General knowledge — not kouik-specific. Fill this in your own words._
-
 ---
 
 ## The full input-to-glass path

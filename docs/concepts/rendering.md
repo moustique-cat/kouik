@@ -1,7 +1,5 @@
 # Rendering concepts
 
-_General knowledge — not kouik-specific. Fill this in your own words._
-
 ---
 
 ## What is a swapchain?
