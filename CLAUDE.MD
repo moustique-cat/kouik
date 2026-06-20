@@ -14,13 +14,13 @@ A note app obsessed with input latency. Keystroke-to-pixel as fast as the hardwa
 ## Stack
 
 - Rust, winit (windowing), wgpu (GPU drawing)
+- You can consider other librairies or dependencies if necessary for the job. The constraint is that they must be well known and safe.
 - Local-first, plain text
 
 ## Design
 
 - Specs live in `design/` (palette.html, type.html), committed to main
-- Synced to claude.ai/design project **"kouik"** (projectId: `02884aad-6444-46f1-8d09-163c1a546d5a`)
-- To update: edit `design/*.html`, then use DesignSync `finalize_plan` → `write_files` → `register_assets`
+- Synced to claude.ai/design (URLs in memory)
 
 ## Status
 
