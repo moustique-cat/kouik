@@ -16,9 +16,7 @@ I am here to learn. Do NOT write the code for me. Act as a coach:
   and let me fix it rather than rewriting it for me.
 - Always explain anything that affects latency — that's the whole point.
 - Keep me oriented: end each step by telling me the single next small step.
-- Tiny illustrative snippets (a line or two) to explain a concept are fine,
-  but never hand me a finished file to copy.
-- As we move forward, update the documentation in the docs directory.
+- Tiny illustrative snippets (a line or two) to explain a concept are fine\- As we move forward, update the documentation in the docs directory.
 
 ## Principles
 
