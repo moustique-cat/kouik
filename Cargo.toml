@@ -9,3 +9,5 @@ wgpu = { version = "24", features = ["wgsl"] }
 pollster = { version = "0.4"}
 bytemuck = { version = "1", features = ["derive"] }
 fontdue = "0.7"
+arboard = "3"
+rfd = "0.15"

@@ -1,9 +1,11 @@
+mod mascot;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, Modifiers, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -18,46 +20,7 @@ const ASCII_FIRST: u8 = 32;
 const ASCII_LAST: u8 = 126;
 const GLYPH_COUNT: usize = (ASCII_LAST - ASCII_FIRST + 1) as usize;
 
-const PIXEL_SIZE: f32 = 8.0;
-const MASCOT_COLS: usize = 12;
-const MASCOT_ROWS: usize = 20;
-
-// Mascot pixel colors
-type MCell = Option<[f32; 4]>;
-const W: MCell = Some([1.000, 1.000, 1.000, 1.0]); // white body
-const P: MCell = Some([0.961, 0.745, 0.773, 1.0]); // pink ear / cheek
-const K: MCell = Some([0.106, 0.106, 0.173, 1.0]); // dark eye
-const H: MCell = Some([1.000, 1.000, 1.000, 1.0]); // eye highlight (white)
-const N: MCell = Some([0.941, 0.627, 0.690, 1.0]); // nose
-const D: MCell = Some([0.784, 0.471, 0.471, 1.0]); // mouth corner
-const E: MCell = None;
-
-#[rustfmt::skip]
-const MASCOT_GRID: [[MCell; MASCOT_COLS]; MASCOT_ROWS] = [
-    [E,E,W,W,E,E,E,E,W,W,E,E], // R0  ear tops
-    [E,E,W,W,E,E,E,E,W,W,E,E], // R1
-    [E,W,W,W,W,E,E,W,W,W,W,E], // R2  ears widen
-    [E,W,P,P,W,E,E,W,P,P,W,E], // R3  inner ear pink
-    [E,W,P,P,W,E,E,W,P,P,W,E], // R4  inner ear pink
-    [E,W,W,W,W,W,W,W,W,W,W,E], // R5  head starts
-    [E,W,W,W,W,W,W,W,W,W,W,E], // R6
-    [E,W,K,H,W,W,W,W,K,H,W,E], // R7  eyes
-    [E,W,K,K,W,W,W,W,K,K,W,E], // R8  eyes lower
-    [E,P,W,W,W,N,N,W,W,W,P,E], // R9  cheeks + nose
-    [E,W,W,W,D,W,W,D,W,W,W,E], // R10 mouth corners
-    [E,W,W,W,W,W,W,W,W,W,W,E], // R11 chin
-    [E,W,W,W,W,W,W,W,W,W,W,E], // R12 body top
-    [W,W,W,W,W,W,W,W,W,W,W,W], // R13
-    [W,W,W,W,W,W,W,W,W,W,W,W], // R14
-    [W,W,W,W,W,W,W,W,W,W,W,W], // R15
-    [E,W,W,W,E,E,E,E,W,W,W,E], // R16 legs
-    [E,W,W,W,E,E,E,E,W,W,W,E], // R17
-    [W,W,W,W,E,E,E,E,W,W,W,W], // R18 feet (wider)
-    [W,W,W,W,E,E,E,E,W,W,W,W], // R19
-];
-
-const EYE_ROWS: [usize; 2] = [7, 8];
-const EYE_COLS: [usize; 4] = [2, 3, 8, 9];
+use mascot::{COLS as MASCOT_COLS, EYE_COLS, EYE_ROWS, GRID as MASCOT_GRID, PIXEL_SIZE, ROWS as MASCOT_ROWS};
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -148,10 +111,10 @@ impl Gpu {
             format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode: wgpu::PresentMode::AutoNoVsync,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 1,
         };
         surface.configure(&device, &config);
 
@@ -367,8 +330,8 @@ impl Gpu {
         self.surface.configure(&self.device, &self.config);
     }
 
-    fn update_text(&mut self, text: &str, cursor: usize) {
-        let verts = self.build_text_vertices(text, cursor);
+    fn update_text(&mut self, text: &str, cursor: usize, sel: Option<(usize, usize)>) {
+        let verts = self.build_text_vertices(text, cursor, sel);
         self.vertex_count = verts.len() as u32;
         self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
     }
@@ -379,10 +342,11 @@ impl Gpu {
         self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
     }
 
-    fn build_text_vertices(&self, text: &str, cursor: usize) -> Vec<Vertex> {
+    fn build_text_vertices(&self, text: &str, cursor: usize, sel: Option<(usize, usize)>) -> Vec<Vertex> {
         let sw = self.config.width as f32;
         let sh = self.config.height as f32;
         let white = [1.0f32, 1.0, 1.0, 1.0];
+        let sel_color = [0.27f32, 0.45, 0.85, 0.35];
         let mut verts: Vec<Vertex> = Vec::with_capacity((text.len() + 1) * 6);
 
         let line_height = self.ascent + self.descent;
@@ -397,11 +361,25 @@ impl Gpu {
                 cursor_x = pen_x;
                 cursor_line = line;
             }
+            let baseline_y = PADDING_Y + line as f32 * line_height + self.ascent;
+            let top_y = baseline_y - self.ascent;
+            let bot_y = baseline_y + self.descent;
             if ch == '\n' {
+                if let Some((s, e)) = sel {
+                    if byte_idx >= s && byte_idx < e {
+                        push_quad(&mut verts, sw, sh, pen_x, top_y, pen_x + 8.0, bot_y,
+                            -1.0, -1.0, -1.0, -1.0, sel_color);
+                    }
+                }
                 pen_x = PADDING_X;
                 line += 1;
             } else if let Some(g) = self.glyphs.get(&ch) {
-                let baseline_y = PADDING_Y + line as f32 * line_height + self.ascent;
+                if let Some((s, e)) = sel {
+                    if byte_idx >= s && byte_idx < e {
+                        push_quad(&mut verts, sw, sh, pen_x, top_y, pen_x + g.advance_width, bot_y,
+                            -1.0, -1.0, -1.0, -1.0, sel_color);
+                    }
+                }
                 if g.width > 0.0 && g.height > 0.0 {
                     let x0 = pen_x + g.bearing_x;
                     let y0 = baseline_y - g.above_baseline;
@@ -593,23 +571,30 @@ struct App {
     gpu: Option<Gpu>,
     text: String,
     cursor: usize,
+    anchor: Option<usize>,
+    modifiers: Modifiers,
+    clipboard: Option<arboard::Clipboard>,
     show_mascot: bool,
     mascot_t0: Instant,
     mascot_hop_t: Option<Instant>,
+    file_path: Option<std::path::PathBuf>,
+    docs_folder: std::path::PathBuf,
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let title = if cfg!(debug_assertions) { "kouik [dev]" } else { "kouik" };
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("kouik"))
+                .create_window(Window::default_attributes().with_title(title))
                 .unwrap(),
         );
         let mut gpu = pollster::block_on(Gpu::new(Arc::clone(&window)));
         if self.show_mascot {
             gpu.update_mascot(self.mascot_t0.elapsed().as_secs_f64() * 1000.0, None);
         } else {
-            gpu.update_text(&self.text, self.cursor);
+            let sel = self.anchor.map(|a| (a.min(self.cursor), a.max(self.cursor)));
+            gpu.update_text(&self.text, self.cursor, sel);
         }
         self.window = Some(window);
         self.gpu = Some(gpu);
@@ -634,9 +619,14 @@ impl ApplicationHandler for App {
                             .filter(|&ms| ms < 580.0);
                         gpu.update_mascot(t_ms, hop_ms);
                     } else {
-                        gpu.update_text(&self.text, self.cursor);
+                        let sel = self.anchor.map(|a| (a.min(self.cursor), a.max(self.cursor)));
+                        gpu.update_text(&self.text, self.cursor, sel);
                     }
                 }
+            }
+
+            WindowEvent::ModifiersChanged(mods) => {
+                self.modifiers = mods;
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
@@ -656,9 +646,17 @@ impl ApplicationHandler for App {
                 let was_mascot = self.show_mascot;
                 self.show_mascot = false;
 
+                let cmd = self.modifiers.state().super_key() || self.modifiers.state().control_key();
+                let shift = self.modifiers.state().shift_key();
+
                 let changed = match &key_event.logical_key {
                     Key::Named(NamedKey::Backspace) => {
-                        if self.cursor > 0 {
+                        if let Some(anchor) = self.anchor.take() {
+                            let (lo, hi) = (self.cursor.min(anchor), self.cursor.max(anchor));
+                            self.text.replace_range(lo..hi, "");
+                            self.cursor = lo;
+                            true
+                        } else if self.cursor > 0 {
                             let prev = prev_char_boundary(&self.text, self.cursor);
                             self.text.remove(prev);
                             self.cursor = prev;
@@ -668,7 +666,23 @@ impl ApplicationHandler for App {
                         }
                     }
                     Key::Named(NamedKey::ArrowLeft) => {
-                        if self.cursor > 0 {
+                        if cmd {
+                            let start = line_start(&self.text, self.cursor);
+                            if shift { if self.anchor.is_none() { self.anchor = Some(self.cursor); } }
+                            else { self.anchor = None; }
+                            let changed = self.cursor != start;
+                            self.cursor = start;
+                            changed
+                        } else if shift {
+                            if self.anchor.is_none() { self.anchor = Some(self.cursor); }
+                            if self.cursor > 0 { self.cursor = prev_char_boundary(&self.text, self.cursor); true }
+                            else { false }
+                        } else if let Some(anchor) = self.anchor.take() {
+                            let target = self.cursor.min(anchor);
+                            let changed = self.cursor != target;
+                            self.cursor = target;
+                            changed
+                        } else if self.cursor > 0 {
                             self.cursor = prev_char_boundary(&self.text, self.cursor);
                             true
                         } else {
@@ -676,14 +690,93 @@ impl ApplicationHandler for App {
                         }
                     }
                     Key::Named(NamedKey::ArrowRight) => {
-                        if self.cursor < self.text.len() {
+                        if cmd {
+                            let end = line_end(&self.text, self.cursor);
+                            if shift { if self.anchor.is_none() { self.anchor = Some(self.cursor); } }
+                            else { self.anchor = None; }
+                            let changed = self.cursor != end;
+                            self.cursor = end;
+                            changed
+                        } else if shift {
+                            if self.anchor.is_none() { self.anchor = Some(self.cursor); }
+                            if self.cursor < self.text.len() { self.cursor = next_char_boundary(&self.text, self.cursor); true }
+                            else { false }
+                        } else if let Some(anchor) = self.anchor.take() {
+                            let target = self.cursor.max(anchor);
+                            let changed = self.cursor != target;
+                            self.cursor = target;
+                            changed
+                        } else if self.cursor < self.text.len() {
                             self.cursor = next_char_boundary(&self.text, self.cursor);
                             true
                         } else {
                             false
                         }
                     }
+                    Key::Named(NamedKey::ArrowUp) => {
+                        if shift { if self.anchor.is_none() { self.anchor = Some(self.cursor); } }
+                        else { self.anchor = None; }
+                        if cmd {
+                            let changed = self.cursor != 0;
+                            self.cursor = 0;
+                            changed
+                        } else {
+                            let cur_start = line_start(&self.text, self.cursor);
+                            if cur_start == 0 {
+                                if self.cursor != 0 { self.cursor = 0; true } else { false }
+                            } else {
+                                let col = char_col(&self.text, self.cursor);
+                                let prev_start = line_start(&self.text, cur_start - 1);
+                                let new_pos = col_to_byte(&self.text, prev_start, col);
+                                let changed = self.cursor != new_pos;
+                                self.cursor = new_pos;
+                                changed
+                            }
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowDown) => {
+                        if shift { if self.anchor.is_none() { self.anchor = Some(self.cursor); } }
+                        else { self.anchor = None; }
+                        if cmd {
+                            let changed = self.cursor != self.text.len();
+                            self.cursor = self.text.len();
+                            changed
+                        } else if let Some(offset) = self.text[self.cursor..].find('\n') {
+                            let col = char_col(&self.text, self.cursor);
+                            let next_start = self.cursor + offset + 1;
+                            let new_pos = col_to_byte(&self.text, next_start, col);
+                            let changed = self.cursor != new_pos;
+                            self.cursor = new_pos;
+                            changed
+                        } else if self.cursor != self.text.len() {
+                            self.cursor = self.text.len();
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Key::Named(NamedKey::Home) => {
+                        let start = line_start(&self.text, self.cursor);
+                        if shift { if self.anchor.is_none() { self.anchor = Some(self.cursor); } }
+                        else { self.anchor = None; }
+                        let changed = self.cursor != start;
+                        self.cursor = start;
+                        changed
+                    }
+                    Key::Named(NamedKey::End) => {
+                        let end = line_end(&self.text, self.cursor);
+                        if shift { if self.anchor.is_none() { self.anchor = Some(self.cursor); } }
+                        else { self.anchor = None; }
+                        let changed = self.cursor != end;
+                        self.cursor = end;
+                        changed
+                    }
                     Key::Named(NamedKey::Enter) => {
+                        if let Some(anchor) = self.anchor.take() {
+                            let (lo, hi) = (self.cursor.min(anchor), self.cursor.max(anchor));
+                            self.text.replace_range(lo..hi, "");
+                            self.cursor = lo;
+                        }
                         if self.text.chars().count() < MAX_CHARS {
                             self.text.insert(self.cursor, '\n');
                             self.cursor += 1;
@@ -696,8 +789,101 @@ impl ApplicationHandler for App {
                         event_loop.exit();
                         false
                     }
+                    Key::Character(s) if cmd => match s.as_str() {
+                        "n" | "N" => {
+                            let picked = rfd::FileDialog::new()
+                                .set_directory(&self.docs_folder)
+                                .add_filter("Text", &["txt"])
+                                .save_file();
+                            if let Some(mut path) = picked {
+                                if path.extension().is_none() {
+                                    path.set_extension("txt");
+                                }
+                                let _ = std::fs::write(&path, "");
+                                self.text.clear();
+                                self.cursor = 0;
+                                self.anchor = None;
+                                self.show_mascot = false;
+                                if let Some(w) = &self.window {
+                                    let name = path.file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("kouik");
+                                    let title = if cfg!(debug_assertions) {
+                                        format!("{} [dev]", name)
+                                    } else {
+                                        name.to_string()
+                                    };
+                                    w.set_title(&title);
+                                }
+                                self.file_path = Some(path);
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        "s" | "S" => {
+                            if let Some(path) = &self.file_path {
+                                let _ = std::fs::write(path, &self.text);
+                            }
+                            false
+                        }
+                        "a" | "A" => {
+                            self.anchor = Some(0);
+                            self.cursor = self.text.len();
+                            true
+                        }
+                        "c" | "C" => {
+                            if let Some(anchor) = self.anchor {
+                                let (lo, hi) = (self.cursor.min(anchor), self.cursor.max(anchor));
+                                let selected = self.text[lo..hi].to_string();
+                                if let Some(cb) = &mut self.clipboard {
+                                    let _ = cb.set_text(selected);
+                                }
+                            }
+                            false
+                        }
+                        "x" | "X" => {
+                            if let Some(anchor) = self.anchor.take() {
+                                let (lo, hi) = (self.cursor.min(anchor), self.cursor.max(anchor));
+                                let selected = self.text[lo..hi].to_string();
+                                if let Some(cb) = &mut self.clipboard {
+                                    let _ = cb.set_text(selected);
+                                }
+                                self.text.replace_range(lo..hi, "");
+                                self.cursor = lo;
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        "v" | "V" => {
+                            if let Some(anchor) = self.anchor.take() {
+                                let (lo, hi) = (self.cursor.min(anchor), self.cursor.max(anchor));
+                                self.text.replace_range(lo..hi, "");
+                                self.cursor = lo;
+                            }
+                            let pasted = self.clipboard.as_mut().and_then(|cb| cb.get_text().ok());
+                            if let Some(pasted) = pasted {
+                                for ch in pasted.chars() {
+                                    if (!ch.is_control() || ch == '\n') && self.text.chars().count() < MAX_CHARS {
+                                        self.text.insert(self.cursor, ch);
+                                        self.cursor += ch.len_utf8();
+                                    }
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    },
                     _ => {
                         if let Some(text) = &key_event.text {
+                            if let Some(anchor) = self.anchor.take() {
+                                let (lo, hi) = (self.cursor.min(anchor), self.cursor.max(anchor));
+                                self.text.replace_range(lo..hi, "");
+                                self.cursor = lo;
+                            }
                             let before = self.text.len();
                             for ch in text.chars() {
                                 if !ch.is_control() && self.text.chars().count() < MAX_CHARS {
@@ -713,8 +899,12 @@ impl ApplicationHandler for App {
                 };
 
                 if changed || was_mascot {
+                    let sel = self.anchor.map(|a| (a.min(self.cursor), a.max(self.cursor)));
                     if let Some(gpu) = &mut self.gpu {
-                        gpu.update_text(&self.text, self.cursor);
+                        gpu.update_text(&self.text, self.cursor, sel);
+                    }
+                    if let Some(gpu) = &self.gpu {
+                        gpu.draw();
                     }
                     if let Some(window) = &self.window {
                         window.request_redraw();
@@ -766,15 +956,74 @@ fn next_char_boundary(s: &str, from: usize) -> usize {
     i
 }
 
+fn line_end(s: &str, from: usize) -> usize {
+    s[from..].find('\n').map(|i| from + i).unwrap_or(s.len())
+}
+
+fn line_start(s: &str, from: usize) -> usize {
+    s[..from].rfind('\n').map(|i| i + 1).unwrap_or(0)
+}
+
+fn char_col(s: &str, pos: usize) -> usize {
+    let start = line_start(s, pos);
+    s[start..pos].chars().count()
+}
+
+fn col_to_byte(s: &str, start: usize, col: usize) -> usize {
+    let mut idx = start;
+    for _ in 0..col {
+        match s[idx..].chars().next() {
+            Some('\n') | None => break,
+            Some(ch) => idx += ch.len_utf8(),
+        }
+    }
+    idx
+}
+
+fn docs_folder_config_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    std::path::PathBuf::from(home).join(".config").join("kouik").join("folder")
+}
+
+fn load_docs_folder() -> Option<std::path::PathBuf> {
+    std::fs::read_to_string(docs_folder_config_path())
+        .ok()
+        .map(|s| std::path::PathBuf::from(s.trim()))
+        .filter(|p| p.is_dir())
+}
+
+fn persist_docs_folder(path: &std::path::Path) {
+    let cfg = docs_folder_config_path();
+    let _ = std::fs::create_dir_all(cfg.parent().unwrap());
+    let _ = std::fs::write(cfg, path.to_string_lossy().as_bytes());
+}
+
 fn main() {
+    let docs_folder = load_docs_folder().unwrap_or_else(|| {
+        let picked = rfd::FileDialog::new()
+            .set_title("Choose your notes folder")
+            .pick_folder();
+        let path = picked.unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            std::path::PathBuf::from(home).join("Documents")
+        });
+        persist_docs_folder(&path);
+        path
+    });
+
     let mut app = App {
         window: None,
         gpu: None,
         text: String::new(),
         cursor: 0,
+        anchor: None,
+        modifiers: Modifiers::default(),
+        clipboard: arboard::Clipboard::new().ok(),
         show_mascot: true,
         mascot_t0: Instant::now(),
         mascot_hop_t: None,
+        file_path: None,
+        docs_folder,
     };
     let event_loop = EventLoop::new().unwrap();
     event_loop.run_app(&mut app).unwrap();
