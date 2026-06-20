@@ -16,6 +16,12 @@ as the hardware allows.
 - Rust, winit (windowing), wgpu (GPU drawing)
 - Local-first, plain text
 
+## Design
+
+- Specs live in `design/` (palette.html, type.html), committed to main
+- Synced to claude.ai/design project **"kouik"** (projectId: `02884aad-6444-46f1-8d09-163c1a546d5a`)
+- To update: edit `design/*.html`, then use DesignSync `finalize_plan` → `write_files` → `register_assets`
+
 ## Status
 
 - [x] Cargo scaffold + README, pushed to GitHub
