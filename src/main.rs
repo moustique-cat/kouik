@@ -331,16 +331,23 @@ impl Gpu {
         let sh = self.config.height as f32;
         let mut verts: Vec<Vertex> = Vec::with_capacity((text.len() + 1) * 6);
 
+        let line_height = self.ascent + self.descent;
         let mut pen_x = PADDING_X;
-        let baseline_y = PADDING_Y + self.ascent;
+        let mut line = 0u32;
         let mut cursor_x = pen_x;
+        let mut cursor_line = 0u32;
         let mut byte_idx = 0usize;
 
         for ch in text.chars() {
             if byte_idx == cursor {
                 cursor_x = pen_x;
+                cursor_line = line;
             }
-            if let Some(g) = self.glyphs.get(&ch) {
+            if ch == '\n' {
+                pen_x = PADDING_X;
+                line += 1;
+            } else if let Some(g) = self.glyphs.get(&ch) {
+                let baseline_y = PADDING_Y + line as f32 * line_height + self.ascent;
                 if g.width > 0.0 && g.height > 0.0 {
                     let x0 = pen_x + g.bearing_x;
                     let y0 = baseline_y - g.above_baseline;
@@ -367,17 +374,19 @@ impl Gpu {
 
         if byte_idx == cursor {
             cursor_x = pen_x;
+            cursor_line = line;
         }
 
+        let cursor_baseline_y = PADDING_Y + cursor_line as f32 * line_height + self.ascent;
         // Cursor bar. UV x = -1 signals solid fill in the fragment shader.
         push_quad(
             &mut verts,
             sw,
             sh,
             cursor_x,
-            baseline_y - self.ascent,
+            cursor_baseline_y - self.ascent,
             cursor_x + CURSOR_WIDTH_PX,
-            baseline_y + self.descent,
+            cursor_baseline_y + self.descent,
             -1.0,
             -1.0,
             -1.0,
@@ -490,6 +499,15 @@ impl ApplicationHandler for App {
                     Key::Named(NamedKey::ArrowRight) => {
                         if self.cursor < self.text.len() {
                             self.cursor = next_char_boundary(&self.text, self.cursor);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Key::Named(NamedKey::Enter) => {
+                        if self.text.chars().count() < MAX_CHARS {
+                            self.text.insert(self.cursor, '\n');
+                            self.cursor += 1;
                             true
                         } else {
                             false
