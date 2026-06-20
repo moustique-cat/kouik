@@ -3,6 +3,9 @@
 A note app obsessed with input latency. Keystroke-to-pixel as fast
 as the hardware allows.
 
+## How I want you to work
+- Commit often. One line message. 
+
 ## Principles
 
 - Minimal work per keystroke: input → buffer → draw → present
