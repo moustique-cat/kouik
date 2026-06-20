@@ -5,6 +5,6 @@ struct App {
 }
 
 fn main() {
-    let app = App { window: None };
+    let _app = App { window: None };
     
 }
