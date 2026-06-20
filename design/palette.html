@@ -1,0 +1,107 @@
+<!-- @dsCard group="Foundations" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kouik — Color Palette</title>
+<style>
+  /* These values are sourced from src/main.rs */
+  :root {
+    --bg:      #3F3F59; /* wgpu clear: linear(0.05, 0.05, 0.10) → sRGB */
+    --text:    #FFFFFF; /* glyph alpha-blended over bg */
+    --cursor:  #FFFFFF; /* solid bar, uv.x < -0.5 sentinel → fs solid white */
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 13px;
+    padding: 40px;
+    min-height: 100vh;
+  }
+
+  h1 { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.4; margin-bottom: 32px; }
+
+  .swatches { display: flex; gap: 24px; flex-wrap: wrap; }
+
+  .swatch {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 160px;
+  }
+
+  .chip {
+    width: 100%;
+    height: 80px;
+    border-radius: 4px;
+  }
+
+  .chip--bg     { background: var(--bg); border: 1px solid rgba(255,255,255,0.12); }
+  .chip--text   { background: var(--text); }
+  .chip--cursor { background: var(--cursor); width: 2px; height: 80px; }
+
+  .label { font-size: 11px; opacity: 0.6; line-height: 1.6; }
+  .label strong { display: block; opacity: 1; color: var(--text); font-size: 13px; margin-bottom: 2px; }
+
+  .cursor-row { display: flex; align-items: center; gap: 16px; }
+
+  hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 40px 0; }
+
+  .notes { font-size: 11px; opacity: 0.4; line-height: 1.8; max-width: 480px; }
+</style>
+</head>
+<body>
+
+<h1>kouik / palette</h1>
+
+<div class="swatches">
+
+  <div class="swatch">
+    <div class="chip chip--bg"></div>
+    <div class="label">
+      <strong>Background</strong>
+      #3F3F59<br>
+      linear (0.05, 0.05, 0.10)<br>
+      wgpu clear color
+    </div>
+  </div>
+
+  <div class="swatch">
+    <div class="chip chip--text"></div>
+    <div class="label">
+      <strong>Text</strong>
+      #FFFFFF<br>
+      alpha-blended from atlas<br>
+      R8Unorm coverage
+    </div>
+  </div>
+
+  <div class="swatch">
+    <div class="cursor-row">
+      <div class="chip--cursor"></div>
+    </div>
+    <div class="label">
+      <strong>Cursor</strong>
+      #FFFFFF · 2 px wide<br>
+      solid (uv.x &lt; −0.5 sentinel)<br>
+      full line height (ascent + descent)
+    </div>
+  </div>
+
+</div>
+
+<hr>
+
+<p class="notes">
+  The background is specified in linear light space in the wgpu clear op. When the surface format
+  is sRGB (typical on macOS), the GPU converts to display-referred on output — so the visual
+  result is approximately #3F3F59, a dark blue-slate. Use the linear tuple (0.05, 0.05, 0.10)
+  as the authoritative value when writing GPU code; use the hex approximation only for CSS reference.
+</p>
+
+</body>
+</html>

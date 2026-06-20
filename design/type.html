@@ -1,0 +1,111 @@
+<!-- @dsCard group="Foundations" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kouik — Typography</title>
+<style>
+  :root {
+    --bg:   #3F3F59;
+    --text: #FFFFFF;
+    --dim:  rgba(255,255,255,0.35);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 13px;
+    padding: 40px; /* matches PADDING_X / PADDING_Y = 40px */
+    min-height: 100vh;
+  }
+
+  h1 { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); margin-bottom: 32px; }
+
+  section { margin-bottom: 48px; }
+  section h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); margin-bottom: 16px; }
+
+  /* — Primary text style — */
+  .specimen {
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 20px; /* FONT_SIZE = 20.0 */
+    line-height: 1;
+    color: var(--text);
+  }
+
+  /* Simulated cursor bar */
+  .cursor-demo {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 0;
+  }
+  .cursor-bar {
+    display: inline-block;
+    width: 2px;       /* CURSOR_WIDTH_PX = 2.0 */
+    background: var(--text);
+    align-self: stretch;
+  }
+
+  .grid {
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 20px;
+    line-height: 1.5;
+    letter-spacing: 0;
+    color: var(--text);
+    word-break: break-all;
+    max-width: 640px;
+  }
+
+  table { border-collapse: collapse; }
+  td { padding: 4px 16px 4px 0; font-size: 12px; color: var(--dim); vertical-align: top; }
+  td:first-child { color: var(--text); font-family: "SF Mono", ui-monospace, monospace; font-size: 13px; white-space: nowrap; }
+
+  hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 40px 0; }
+</style>
+</head>
+<body>
+
+<h1>kouik / typography</h1>
+
+<!-- Specimen -->
+<section>
+  <h2>Primary text</h2>
+  <div class="specimen">
+    <div class="cursor-demo">
+      <span>The quick brown fox</span><span class="cursor-bar"></span>
+    </div>
+  </div>
+</section>
+
+<!-- Metrics -->
+<section>
+  <h2>Metrics</h2>
+  <table>
+    <tr><td>Font</td><td>SF Mono (SFNSMono.ttf, system)</td></tr>
+    <tr><td>Font size</td><td>20 px — FONT_SIZE in main.rs</td></tr>
+    <tr><td>Rasterizer</td><td>fontdue, R8Unorm single-channel atlas</td></tr>
+    <tr><td>Atlas filtering</td><td>Linear mag + min (wgpu sampler)</td></tr>
+    <tr><td>Glyph coverage</td><td>Printable ASCII 32–126 (GLYPH_COUNT = 95)</td></tr>
+    <tr><td>Padding X</td><td>40 px — PADDING_X</td></tr>
+    <tr><td>Padding Y</td><td>40 px — PADDING_Y</td></tr>
+    <tr><td>Cursor width</td><td>2 px — CURSOR_WIDTH_PX</td></tr>
+    <tr><td>Cursor color</td><td>#FFFFFF solid (sentinel uv.x &lt; −0.5)</td></tr>
+    <tr><td>Layout model</td><td>Monospace advance width, single line</td></tr>
+    <tr><td>Max chars</td><td>4096 — MAX_CHARS</td></tr>
+  </table>
+</section>
+
+<hr>
+
+<!-- ASCII glyph grid -->
+<section>
+  <h2>ASCII glyph atlas (32–126)</h2>
+  <div class="grid">
+     !"#$%&amp;'()*+,-./0123456789:;&lt;=&gt;?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+  </div>
+</section>
+
+</body>
+</html>
