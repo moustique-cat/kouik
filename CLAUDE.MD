@@ -4,7 +4,7 @@ A note app obsessed with input latency. Keystroke-to-pixel as fast
 as the hardware allows.
 
 ## How I want you to work
-- Commit often. One line message. 
+- Commit often. Only one line message. 
 
 ## Principles
 
