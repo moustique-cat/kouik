@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -17,11 +18,53 @@ const ASCII_FIRST: u8 = 32;
 const ASCII_LAST: u8 = 126;
 const GLYPH_COUNT: usize = (ASCII_LAST - ASCII_FIRST + 1) as usize;
 
+const PIXEL_SIZE: f32 = 8.0;
+const MASCOT_COLS: usize = 12;
+const MASCOT_ROWS: usize = 20;
+
+// Mascot pixel colors
+type MCell = Option<[f32; 4]>;
+const W: MCell = Some([1.000, 1.000, 1.000, 1.0]); // white body
+const P: MCell = Some([0.961, 0.745, 0.773, 1.0]); // pink ear / cheek
+const K: MCell = Some([0.106, 0.106, 0.173, 1.0]); // dark eye
+const H: MCell = Some([1.000, 1.000, 1.000, 1.0]); // eye highlight (white)
+const N: MCell = Some([0.941, 0.627, 0.690, 1.0]); // nose
+const D: MCell = Some([0.784, 0.471, 0.471, 1.0]); // mouth corner
+const E: MCell = None;
+
+#[rustfmt::skip]
+const MASCOT_GRID: [[MCell; MASCOT_COLS]; MASCOT_ROWS] = [
+    [E,E,W,W,E,E,E,E,W,W,E,E], // R0  ear tops
+    [E,E,W,W,E,E,E,E,W,W,E,E], // R1
+    [E,W,W,W,W,E,E,W,W,W,W,E], // R2  ears widen
+    [E,W,P,P,W,E,E,W,P,P,W,E], // R3  inner ear pink
+    [E,W,P,P,W,E,E,W,P,P,W,E], // R4  inner ear pink
+    [E,W,W,W,W,W,W,W,W,W,W,E], // R5  head starts
+    [E,W,W,W,W,W,W,W,W,W,W,E], // R6
+    [E,W,K,H,W,W,W,W,K,H,W,E], // R7  eyes
+    [E,W,K,K,W,W,W,W,K,K,W,E], // R8  eyes lower
+    [E,P,W,W,W,N,N,W,W,W,P,E], // R9  cheeks + nose
+    [E,W,W,W,D,W,W,D,W,W,W,E], // R10 mouth corners
+    [E,W,W,W,W,W,W,W,W,W,W,E], // R11 chin
+    [E,W,W,W,W,W,W,W,W,W,W,E], // R12 body top
+    [W,W,W,W,W,W,W,W,W,W,W,W], // R13
+    [W,W,W,W,W,W,W,W,W,W,W,W], // R14
+    [W,W,W,W,W,W,W,W,W,W,W,W], // R15
+    [E,W,W,W,E,E,E,E,W,W,W,E], // R16 legs
+    [E,W,W,W,E,E,E,E,W,W,W,E], // R17
+    [W,W,W,W,E,E,E,E,W,W,W,W], // R18 feet (wider)
+    [W,W,W,W,E,E,E,E,W,W,W,W], // R19
+];
+
+const EYE_ROWS: [usize; 2] = [7, 8];
+const EYE_COLS: [usize; 4] = [2, 3, 8, 9];
+
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
     position: [f32; 2],
     uv: [f32; 2],
+    color: [f32; 4],
 }
 
 struct GlyphInfo {
@@ -46,13 +89,18 @@ fn push_quad(
     v0: f32,
     u1: f32,
     v1: f32,
+    color: [f32; 4],
 ) {
     let p = |px: f32, py: f32| -> [f32; 2] { [px / sw * 2.0 - 1.0, 1.0 - py / sh * 2.0] };
-    let tl = Vertex { position: p(x0, y0), uv: [u0, v0] };
-    let tr = Vertex { position: p(x1, y0), uv: [u1, v0] };
-    let bl = Vertex { position: p(x0, y1), uv: [u0, v1] };
-    let br = Vertex { position: p(x1, y1), uv: [u1, v1] };
-    verts.extend_from_slice(&[tl, tr, bl, bl, tr, br]);
+    let mk = |px: f32, py: f32, u: f32, v: f32| Vertex { position: p(px, py), uv: [u, v], color };
+    verts.extend_from_slice(&[
+        mk(x0, y0, u0, v0),
+        mk(x1, y0, u1, v0),
+        mk(x0, y1, u0, v1),
+        mk(x0, y1, u0, v1),
+        mk(x1, y0, u1, v0),
+        mk(x1, y1, u1, v1),
+    ]);
 }
 
 struct Gpu {
@@ -119,8 +167,6 @@ impl Gpu {
             })
             .collect();
 
-        // Determine atlas dimensions from the tallest glyphs above and below baseline.
-        // fontdue: ymin = bottom of glyph in pixels above baseline; ymin+height = top above baseline.
         let max_above = rasterized
             .iter()
             .map(|(_, m, _)| m.ymin + m.height as i32)
@@ -133,7 +179,6 @@ impl Gpu {
             .unwrap_or(0);
         let atlas_h = ((max_above + max_below) as u32).max(1);
 
-        // Fixed-width cells: max advance_width across all glyphs (monospace → all equal).
         let cell_w = rasterized
             .iter()
             .map(|(_, m, _)| m.advance_width.ceil() as u32)
@@ -173,7 +218,6 @@ impl Gpu {
             });
         }
 
-        // Upload atlas texture (R8Unorm: one byte per pixel = alpha coverage).
         let atlas_size =
             wgpu::Extent3d { width: atlas_w, height: atlas_h, depth_or_array_layers: 1 };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -263,7 +307,11 @@ impl Gpu {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x2,
+                        1 => Float32x2,
+                        2 => Float32x4
+                    ],
                 }],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
@@ -284,8 +332,8 @@ impl Gpu {
             cache: None,
         });
 
-        // Pre-allocated dynamic vertex buffer: (MAX_CHARS glyphs + 1 cursor) × 6 vertices.
-        let max_verts = (MAX_CHARS + 1) * 6;
+        // Buffer sized for editor text + mascot overhead (pixels + labels)
+        let max_verts = (MAX_CHARS + 400) * 6;
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: (max_verts * std::mem::size_of::<Vertex>()) as u64,
@@ -319,16 +367,22 @@ impl Gpu {
         self.surface.configure(&self.device, &self.config);
     }
 
-    // Rebuild vertex data from text + cursor and upload to GPU.
-    fn update(&mut self, text: &str, cursor: usize) {
-        let verts = self.build_vertices(text, cursor);
+    fn update_text(&mut self, text: &str, cursor: usize) {
+        let verts = self.build_text_vertices(text, cursor);
         self.vertex_count = verts.len() as u32;
         self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
     }
 
-    fn build_vertices(&self, text: &str, cursor: usize) -> Vec<Vertex> {
+    fn update_mascot(&mut self, t_ms: f64, hop_elapsed_ms: Option<f64>) {
+        let verts = self.build_mascot_vertices(t_ms, hop_elapsed_ms);
+        self.vertex_count = verts.len() as u32;
+        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
+    }
+
+    fn build_text_vertices(&self, text: &str, cursor: usize) -> Vec<Vertex> {
         let sw = self.config.width as f32;
         let sh = self.config.height as f32;
+        let white = [1.0f32, 1.0, 1.0, 1.0];
         let mut verts: Vec<Vertex> = Vec::with_capacity((text.len() + 1) * 6);
 
         let line_height = self.ascent + self.descent;
@@ -353,19 +407,8 @@ impl Gpu {
                     let y0 = baseline_y - g.above_baseline;
                     let v0 = (self.max_above - g.above_baseline) / self.atlas_height;
                     let v1 = v0 + g.height / self.atlas_height;
-                    push_quad(
-                        &mut verts,
-                        sw,
-                        sh,
-                        x0,
-                        y0,
-                        x0 + g.width,
-                        y0 + g.height,
-                        g.u0,
-                        v0,
-                        g.u1,
-                        v1,
-                    );
+                    push_quad(&mut verts, sw, sh, x0, y0, x0 + g.width, y0 + g.height,
+                        g.u0, v0, g.u1, v1, white);
                 }
                 pen_x += g.advance_width;
             }
@@ -378,22 +421,131 @@ impl Gpu {
         }
 
         let cursor_baseline_y = PADDING_Y + cursor_line as f32 * line_height + self.ascent;
-        // Cursor bar. UV x = -1 signals solid fill in the fragment shader.
-        push_quad(
-            &mut verts,
-            sw,
-            sh,
-            cursor_x,
-            cursor_baseline_y - self.ascent,
-            cursor_x + CURSOR_WIDTH_PX,
-            cursor_baseline_y + self.descent,
-            -1.0,
-            -1.0,
-            -1.0,
-            -1.0,
-        );
+        push_quad(&mut verts, sw, sh,
+            cursor_x, cursor_baseline_y - self.ascent,
+            cursor_x + CURSOR_WIDTH_PX, cursor_baseline_y + self.descent,
+            -1.0, -1.0, -1.0, -1.0, white);
 
         verts
+    }
+
+    fn build_mascot_vertices(&self, t_ms: f64, hop_elapsed_ms: Option<f64>) -> Vec<Vertex> {
+        let sw = self.config.width as f32;
+        let sh = self.config.height as f32;
+        let white = [1.0f32, 1.0, 1.0, 1.0];
+        let dim = [0.40f32, 0.40, 0.50, 1.0];
+
+        let s = PIXEL_SIZE;
+        let sprite_w = MASCOT_COLS as f32 * s;
+        let sprite_h = MASCOT_ROWS as f32 * s;
+
+        // Float: gentle sine bob
+        let float_y = (t_ms / 1400.0 * std::f64::consts::PI).sin() as f32 * s;
+
+        // Hop: -sin arc over 580ms
+        let hop_y = hop_elapsed_ms
+            .map(|ms| -(ms / 580.0 * std::f64::consts::PI).sin() as f32 * s * 3.2)
+            .unwrap_or(0.0);
+
+        let dy = (float_y + hop_y).round();
+
+        // Blink cycle: 4200ms
+        let bp = (t_ms % 4200.0) / 4200.0;
+        let squinting = (bp > 0.87 && bp < 0.90) || (bp > 0.94 && bp < 0.97);
+        let blinking = bp > 0.90 && bp < 0.94;
+
+        // Layout
+        let line_height = self.ascent + self.descent;
+        let label1 = "// src/mascot.rs";
+        let label2 = "kouik";
+        let label1_w = self.text_width(label1);
+        let label2_w = self.text_width(label2);
+        let gap_sprite_label = 40.0f32;
+        let gap_labels = 8.0f32;
+        let total_h = sprite_h + gap_sprite_label + line_height + gap_labels + line_height;
+        let ox = ((sw - sprite_w) / 2.0).round();
+        let oy = ((sh - total_h) / 2.0).round();
+
+        let mut verts = Vec::with_capacity(300 * 6);
+
+        // Shadow (fixed ground position, shrinks as sprite hops)
+        let shadow_cy = oy + sprite_h + s * 0.75;
+        let s_scale = (1.0 - dy.abs() / (s * 7.0)).max(0.3);
+        let shadow_hw = sprite_w * 0.42 * s_scale;
+        let shadow_hh = s * 0.55 * s_scale;
+        push_quad(&mut verts, sw, sh,
+            sw / 2.0 - shadow_hw, shadow_cy - shadow_hh,
+            sw / 2.0 + shadow_hw, shadow_cy + shadow_hh,
+            -1.0, -1.0, -1.0, -1.0,
+            [0.0, 0.0, 0.0, s_scale * 0.42]);
+
+        // Sprite pixels
+        for (r, row) in MASCOT_GRID.iter().enumerate() {
+            for (c, cell) in row.iter().enumerate() {
+                let Some(base_color) = cell else { continue };
+                let is_eye = EYE_ROWS.contains(&r) && EYE_COLS.contains(&c);
+                let color = if is_eye && (blinking || (squinting && r == 7)) {
+                    [1.0f32, 1.0, 1.0, 1.0]
+                } else {
+                    *base_color
+                };
+                let x0 = ox + c as f32 * s;
+                let y0 = oy + r as f32 * s + dy;
+                push_quad(&mut verts, sw, sh, x0, y0, x0 + s, y0 + s,
+                    -1.0, -1.0, -1.0, -1.0, color);
+            }
+        }
+
+        // Label 1: "// src/mascot.rs" in dim
+        let label1_x = ((sw - label1_w) / 2.0).round();
+        let label1_baseline = oy + sprite_h + gap_sprite_label + self.ascent;
+        self.append_text(&mut verts, sw, sh, label1, label1_x, label1_baseline, dim);
+
+        // Label 2: "kouik" + blinking cursor in white
+        let label2_x = ((sw - label2_w) / 2.0).round();
+        let label2_baseline = label1_baseline + self.descent + gap_labels + self.ascent;
+        self.append_text(&mut verts, sw, sh, label2, label2_x, label2_baseline, white);
+
+        let cursor_on = (t_ms / 500.0) as u64 % 2 == 0;
+        if cursor_on {
+            let cur_x = label2_x + label2_w;
+            push_quad(&mut verts, sw, sh,
+                cur_x, label2_baseline - self.ascent,
+                cur_x + CURSOR_WIDTH_PX, label2_baseline + self.descent,
+                -1.0, -1.0, -1.0, -1.0, white);
+        }
+
+        verts
+    }
+
+    fn append_text(
+        &self,
+        verts: &mut Vec<Vertex>,
+        sw: f32,
+        sh: f32,
+        text: &str,
+        x: f32,
+        baseline_y: f32,
+        color: [f32; 4],
+    ) {
+        let mut pen_x = x;
+        for ch in text.chars() {
+            if let Some(g) = self.glyphs.get(&ch) {
+                if g.width > 0.0 && g.height > 0.0 {
+                    let x0 = pen_x + g.bearing_x;
+                    let y0 = baseline_y - g.above_baseline;
+                    let v0 = (self.max_above - g.above_baseline) / self.atlas_height;
+                    let v1 = v0 + g.height / self.atlas_height;
+                    push_quad(verts, sw, sh, x0, y0, x0 + g.width, y0 + g.height,
+                        g.u0, v0, g.u1, v1, color);
+                }
+                pen_x += g.advance_width;
+            }
+        }
+    }
+
+    fn text_width(&self, text: &str) -> f32 {
+        text.chars().filter_map(|c| self.glyphs.get(&c)).map(|g| g.advance_width).sum()
     }
 
     fn draw(&self) {
@@ -441,6 +593,9 @@ struct App {
     gpu: Option<Gpu>,
     text: String,
     cursor: usize,
+    show_mascot: bool,
+    mascot_t0: Instant,
+    mascot_hop_t: Option<Instant>,
 }
 
 impl ApplicationHandler for App {
@@ -451,7 +606,11 @@ impl ApplicationHandler for App {
                 .unwrap(),
         );
         let mut gpu = pollster::block_on(Gpu::new(Arc::clone(&window)));
-        gpu.update(&self.text, self.cursor);
+        if self.show_mascot {
+            gpu.update_mascot(self.mascot_t0.elapsed().as_secs_f64() * 1000.0, None);
+        } else {
+            gpu.update_text(&self.text, self.cursor);
+        }
         self.window = Some(window);
         self.gpu = Some(gpu);
     }
@@ -468,15 +627,35 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(new_size) => {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(new_size);
-                    gpu.update(&self.text, self.cursor);
+                    if self.show_mascot {
+                        let t_ms = self.mascot_t0.elapsed().as_secs_f64() * 1000.0;
+                        let hop_ms = self.mascot_hop_t
+                            .map(|ht| ht.elapsed().as_secs_f64() * 1000.0)
+                            .filter(|&ms| ms < 580.0);
+                        gpu.update_mascot(t_ms, hop_ms);
+                    } else {
+                        gpu.update_text(&self.text, self.cursor);
+                    }
+                }
+            }
+
+            WindowEvent::MouseInput { state, button, .. } => {
+                if state == ElementState::Pressed
+                    && button == MouseButton::Left
+                    && self.show_mascot
+                {
+                    self.mascot_hop_t = Some(Instant::now());
                 }
             }
 
             WindowEvent::KeyboardInput { event: key_event, .. } => {
-                // Handle both press and repeat (key held down).
                 if key_event.state == ElementState::Released {
                     return;
                 }
+
+                let was_mascot = self.show_mascot;
+                self.show_mascot = false;
+
                 let changed = match &key_event.logical_key {
                     Key::Named(NamedKey::Backspace) => {
                         if self.cursor > 0 {
@@ -521,9 +700,7 @@ impl ApplicationHandler for App {
                         if let Some(text) = &key_event.text {
                             let before = self.text.len();
                             for ch in text.chars() {
-                                if !ch.is_control()
-                                    && self.text.chars().count() < MAX_CHARS
-                                {
+                                if !ch.is_control() && self.text.chars().count() < MAX_CHARS {
                                     self.text.insert(self.cursor, ch);
                                     self.cursor += ch.len_utf8();
                                 }
@@ -535,9 +712,9 @@ impl ApplicationHandler for App {
                     }
                 };
 
-                if changed {
+                if changed || was_mascot {
                     if let Some(gpu) = &mut self.gpu {
-                        gpu.update(&self.text, self.cursor);
+                        gpu.update_text(&self.text, self.cursor);
                     }
                     if let Some(window) = &self.window {
                         window.request_redraw();
@@ -556,6 +733,17 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if self.show_mascot {
+            if let Some(gpu) = &mut self.gpu {
+                let t_ms = self.mascot_t0.elapsed().as_secs_f64() * 1000.0;
+                let hop_ms = self.mascot_hop_t
+                    .map(|ht| ht.elapsed().as_secs_f64() * 1000.0);
+                if hop_ms.map(|ms| ms >= 580.0).unwrap_or(false) {
+                    self.mascot_hop_t = None;
+                }
+                gpu.update_mascot(t_ms, hop_ms.filter(|&ms| ms < 580.0));
+            }
+        }
         if let Some(window) = &self.window {
             window.request_redraw();
         }
@@ -579,7 +767,15 @@ fn next_char_boundary(s: &str, from: usize) -> usize {
 }
 
 fn main() {
-    let mut app = App { window: None, gpu: None, text: String::new(), cursor: 0 };
+    let mut app = App {
+        window: None,
+        gpu: None,
+        text: String::new(),
+        cursor: 0,
+        show_mascot: true,
+        mascot_t0: Instant::now(),
+        mascot_hop_t: None,
+    };
     let event_loop = EventLoop::new().unwrap();
     event_loop.run_app(&mut app).unwrap();
 }
